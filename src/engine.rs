@@ -83,6 +83,20 @@ pub fn run_treefmt(
         .map(|g| g.excludes)
         .unwrap_or_default();
 
+    let specific_includes: Vec<String> = project_config
+        .formatter
+        .values()
+        .flat_map(|config| {
+            config
+                .includes
+                .iter()
+                // As these includes supercede the default matching strategy
+                // we are only looking for exact matches, not globs.
+                .filter(|g| !g.contains('*'))
+                .map(ToOwned::to_owned)
+        })
+        .collect();
+
     timed_debug("load config");
 
     // Load all the formatter instances from the config.
@@ -145,6 +159,24 @@ pub fn run_treefmt(
         // Add the other paths
         for path in paths[1..].iter() {
             builder.add(path);
+        }
+
+        {
+            if !&specific_includes.is_empty() {
+                let mut ov = ignore::overrides::OverrideBuilder::new(tree_root);
+                debug!("Specific includes: {:?}", &specific_includes);
+                for include in &specific_includes {
+                    if let Err(e) = ov.add(include) {
+                        error!("There was an error in the following include directive: {include}, error: {e}");
+                    }
+                }
+                match ov.build() {
+                    Ok(overrides) => {
+                        builder.overrides(overrides);
+                    }
+                    Err(e) => error!("Error applying overrides: {}", e),
+                }
+            };
         }
         // TODO: builder has a lot of interesting options.
         // TODO: use build_parallel with a Visitor.
