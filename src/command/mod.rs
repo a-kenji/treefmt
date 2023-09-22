@@ -24,10 +24,13 @@ use std::{
 pub struct Cli {
     /// Create a new treefmt.toml
     #[arg(short, long, default_value_t = false)]
+    /// Create a new treefmt.toml.
+    #[structopt(long = "init")]
     pub init: bool,
 
     /// Format the content passed in stdin.
     #[arg(long, default_value_t = false, conflicts_with("init"))]
+    #[structopt(long = "stdin", conflicts_with("init"))]
     pub stdin: bool,
 
     /// Ignore the evaluation cache entirely. Useful for CI.
@@ -55,6 +58,20 @@ pub struct Cli {
     #[clap(flatten)]
     pub verbose: Verbosity,
 
+    /// Log verbosity is based off the number of v used.
+    #[structopt(long = "verbose", short = "v", parse(from_occurrences))]
+    pub verbosity: u8,
+    #[structopt(long = "quiet", short = "q")]
+    /// No output printed to stderr
+    pub quiet: bool,
+    #[structopt(short = "C", default_value = ".")]
+    #[structopt(long = "quiet", short = "q")]
+    /// No output printed to stderr.
+    pub quiet: bool,
+    #[structopt(long = "hidden", short = "H")]
+    /// Include hidden files while traversing the tree.
+    pub hidden: bool,
+    #[structopt(short = "C", default_value = ".")]
     /// Run as if treefmt was started in <work-dir> instead of the current working directory.
     #[arg(short = 'C', default_value = ".", value_parser = parse_path)]
     pub work_dir: PathBuf,
@@ -154,6 +171,19 @@ pub fn run_cli(cli: &Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        format_cmd(
+            &cli.tree_root,
+            &cli.work_dir,
+            cli.config_file
+                .as_ref()
+                .expect("presence asserted in ::cli_from_args"),
+            &cli.paths,
+            cli.no_cache,
+            cli.hidden,
+            cli.clear_cache,
+            cli.fail_on_change,
+            &cli.formatters,
+        )?
     }
 
     Ok(())
