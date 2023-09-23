@@ -155,7 +155,22 @@ pub fn run_treefmt(
     let walker = {
         // For some reason the WalkBuilder must start with one path, but can add more paths later.
         // unwrap: we checked before that there is at least one path in the vector
-        let mut builder = WalkBuilder::new(paths.first().unwrap());
+        let mut builder = WalkBuilder::new(tree_root);
+        // Add the other paths
+        for path in paths[1..].iter() {
+            builder.add(path);
+        }
+
+        // TODO: builder has a lot of interesting options.
+        // TODO: use build_parallel with a Visitor.
+        //       See https://docs.rs/ignore/0.4.17/ignore/struct.WalkParallel.html#method.visit
+        builder.build()
+    };
+
+    let inclusive_walker = {
+        // For some reason the WalkBuilder must start with one path, but can add more paths later.
+        // unwrap: we checked before that there is at least one path in the vector
+        let mut builder = WalkBuilder::new(tree_root);
         // Add the other paths
         for path in paths[1..].iter() {
             builder.add(path);
@@ -178,9 +193,6 @@ pub fn run_treefmt(
                 }
             };
         }
-        // TODO: builder has a lot of interesting options.
-        // TODO: use build_parallel with a Visitor.
-        //       See https://docs.rs/ignore/0.4.17/ignore/struct.WalkParallel.html#method.visit
         builder.build()
     };
 
@@ -189,7 +201,7 @@ pub fn run_treefmt(
 
     // Now traverse the filesystem and classify each file. We also want the file mtime to see if it changed
     // afterwards.
-    for walk_entry in walker {
+    for walk_entry in walker.chain(inclusive_walker) {
         match walk_entry {
             Ok(dir_entry) => {
                 if let Some(file_type) = dir_entry.file_type() {
