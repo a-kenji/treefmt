@@ -32,7 +32,7 @@ This section describes the integration between a single formatter and treefmt. "
 
 - `command`: A list of arguments to be executed. This will be concatenated with the options attribute during invocation. The first argument is the name of the executable to run.
 - `options`: A list of extra arguments to add to the command. These are typically project-specific arguments.
-- `includes`: A list of glob patterns to match file names, including extensions and paths, used to select specific files for formatting. Typically, only file extensions are specified to pick all files written in a specific language. For instance,[`"*.sh"`] selects shell script files. But sometimes, you may need to specify a full file name, like [`"Makefile"`], or a pattern picking files in a specific folder, like [`"/home/user/project/*"`].
+- `includes`: A list of glob patterns to match file names, including extensions and paths, used to select specific files for formatting. Typically, only file extensions are specified to pick all files written in a specific language. For instance,[`"*.sh"`] selects shell script files. But sometimes, you may need to specify a full file name, like [`"Makefile"`], or a pattern picking files in a specific folder, like [`"/home/user/project/*"`]. By default hidden files and folders (starting with a `.`) will not be traversed. When directly (without globbing) specifying the files, or folders they can be included in traversal, for example [`".treefmt.toml"`] or [`".github"`]
 
 - `excludes`: A list of glob patterns to exclude from formatting. If any of these patterns match, the file will be excluded from formatting by a particular formatter.
 

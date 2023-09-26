@@ -4,7 +4,8 @@ use crate::config::Root;
 use crate::{config, eval_cache::CacheManifest, formatter::FormatterName};
 use crate::{expand_path, formatter::Formatter, get_meta, get_path_meta, FileMeta};
 use anyhow::anyhow;
-use ignore::{Walk, WalkBuilder};
+use ignore::overrides::OverrideBuilder;
+use ignore::{DirEntry, Walk, WalkBuilder};
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use std::fs::File;
@@ -89,7 +90,8 @@ pub fn run_treefmt(
         cache.update_formatters(formatters.clone());
     }
 
-    let walker = build_walker(paths);
+    let specific_includes = vec![];
+    let walker = build_walker(paths.clone(), specific_includes);
 
     let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
     stats.timed_debug("tree walk");
@@ -276,8 +278,8 @@ fn load_formatters(
 /// Walk over the entries and collect it's matches.
 /// The matches are a collection of formatter names to path to mtime.
 /// We want the file mtime to see if it changed afterwards.
-fn collect_matches_from_walker(
-    walker: Walk,
+fn collect_matches_from_walker<W: Iterator<Item = Result<DirEntry, ignore::Error>>>(
+    walker: W,
     formatters: &BTreeMap<FormatterName, Formatter>,
     stats: &mut Statistics,
 ) -> BTreeMap<FormatterName, BTreeMap<PathBuf, FileMeta>> {
@@ -322,7 +324,10 @@ fn collect_matches_from_walker(
 }
 
 /// Configure and build the tree walker
-fn build_walker(paths: Vec<PathBuf>) -> Walk {
+fn build_walker(
+    paths: Vec<PathBuf>,
+    specific_includes: Vec<String>,
+) -> impl Iterator<Item = Result<DirEntry, ignore::Error>> {
     // For some reason the WalkBuilder must start with one path, but can add more paths later.
     // unwrap: we checked before that there is at least one path in the vector
     let mut builder = WalkBuilder::new(paths.first().unwrap());
@@ -330,10 +335,34 @@ fn build_walker(paths: Vec<PathBuf>) -> Walk {
     for path in paths[1..].iter() {
         builder.add(path);
     }
+
+    if !specific_includes.is_empty() {
+        let overrides = build_overrides(paths, specific_includes);
+
+        match overrides.build() {
+            Ok(overrides) => {
+                builder.overrides(overrides);
+            }
+            Err(e) => error!("Error applying overrides: {}", e),
+        }
+    }
     // TODO: builder has a lot of interesting options.
     // TODO: use build_parallel with a Visitor.
     //       See https://docs.rs/ignore/0.4.17/ignore/struct.WalkParallel.html#method.visit
     builder.build()
+}
+
+fn build_overrides(paths: Vec<PathBuf>, specific_includes: Vec<String>) -> OverrideBuilder {
+    let mut ov = ignore::overrides::OverrideBuilder::new(paths.first().unwrap());
+    debug!("Specific includes: {:?}", &specific_includes);
+    for include in &specific_includes {
+        if let Err(e) = ov.add(include) {
+            error!(
+                "There was an error in the following include directive: {include:?}, error: {e}"
+            );
+        }
+    }
+    ov
 }
 
 /// Run the treefmt in a stdin buffer, and print it out back to stdout
