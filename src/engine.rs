@@ -5,7 +5,7 @@ use crate::{config, eval_cache::CacheManifest, formatter::FormatterName};
 use crate::{expand_path, formatter::Formatter, get_meta, get_path_meta, FileMeta};
 use anyhow::anyhow;
 use ignore::overrides::OverrideBuilder;
-use ignore::{DirEntry, Walk, WalkBuilder};
+use ignore::{DirEntry, WalkBuilder};
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use std::fs::File;
@@ -66,6 +66,8 @@ pub fn run_treefmt(
     // Load the treefmt.toml file
     let project_config = config::from_path(treefmt_toml)?;
 
+    let specific_includes = collect_specific_includes(project_config.formatter.values());
+
     stats.timed_debug("load config");
 
     let formatters = load_formatters(
@@ -90,10 +92,11 @@ pub fn run_treefmt(
         cache.update_formatters(formatters.clone());
     }
 
-    let specific_includes = vec![];
-    let walker = build_walker(paths.clone(), specific_includes);
+    let walker = build_walker(paths.clone(), vec![]);
+    let include_walker = build_walker(paths.clone(), specific_includes);
 
-    let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
+    let matches =
+        collect_matches_from_walker(walker.chain(include_walker), &formatters, &mut stats);
     stats.timed_debug("tree walk");
 
     // Filter out all of the paths that were already in the cache
@@ -192,6 +195,22 @@ pub fn run_treefmt(
     }
 
     ret
+}
+
+fn collect_specific_includes(
+    values: std::collections::btree_map::Values<String, config::FmtConfig>,
+) -> Vec<String> {
+    values
+        .flat_map(|config| {
+            config
+                .includes
+                .iter()
+                // As these includes supercede the default matching strategy
+                // we are only looking for exact matches, not globs.
+                .filter(|g| !g.contains('*'))
+                .map(ToOwned::to_owned)
+        })
+        .collect()
 }
 
 /// Diff the old matches with the new matches
@@ -1010,7 +1029,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let _matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 3);
@@ -1059,7 +1078,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let _matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 15);
@@ -1087,7 +1106,7 @@ mod tests {
         }
 
         let config = format!(
-            // The hidden file is not being matched.
+            // The hidden files are explicitly matched.
             "
         [formatter.python]
         command = {black:?}
@@ -1097,23 +1116,45 @@ mod tests {
         command = {nixpkgs_fmt:?}
         includes = [\"*.nix\"]
 
-        [formatter.elm]
-        command = {elm_fmt:?}
-        options = [\"--yes\"]
-        includes = [\"*.elm\", \"test3\"]
         "
         );
 
         let root = from_string(&config).unwrap();
         let mut stats = Statistics::init();
 
+        let specific_includes = collect_specific_includes(root.formatter.values());
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
-        let _matches = collect_matches_from_walker(walker, &formatters, &mut stats);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
+        let include_walker = build_walker(vec![tree_root.to_path_buf()], specific_includes);
+        let matches =
+            collect_matches_from_walker(walker.chain(include_walker), &formatters, &mut stats);
 
-        assert_eq!(stats.traversed_files, 15);
-        assert_eq!(stats.matched_files, 11);
+        assert_eq!(stats.traversed_files, 17);
+        assert_eq!(stats.matched_files, 9);
+        let python_matches: Vec<PathBuf> = matches
+            .get(&FormatterName::new("python"))
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let nix_matches: Vec<PathBuf> = matches
+            .get(&FormatterName::new("nix"))
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let expected_python_matches: Vec<PathBuf> =
+            [".test4", "test", "test.py", "test1.py", "test3.py"]
+                .iter()
+                .map(|p| tree_root.join(p))
+                .collect();
+        let expected_nix_matches: Vec<PathBuf> = ["test.nix", "test1.nix", "test3.nix"]
+            .iter()
+            .map(|p| tree_root.join(p))
+            .collect();
+        assert_eq!(python_matches, expected_python_matches);
+        assert_eq!(nix_matches, expected_nix_matches);
     }
     #[test]
     fn test_walker_some_matches_local_exclude() {
@@ -1159,7 +1200,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 12);
@@ -1242,7 +1283,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 18);
@@ -1314,7 +1355,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 7);
@@ -1376,7 +1417,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 7);
@@ -1446,7 +1487,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 8);
@@ -1515,7 +1556,7 @@ mod tests {
 
         let formatters = load_formatters(root, tree_root, false, &None, &mut stats).unwrap();
 
-        let walker = build_walker(vec![tree_root.to_path_buf()]);
+        let walker = build_walker(vec![tree_root.to_path_buf()], vec![]);
         let matches = collect_matches_from_walker(walker, &formatters, &mut stats);
 
         assert_eq!(stats.traversed_files, 7);
